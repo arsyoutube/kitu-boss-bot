@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: kitu-boss-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node bot.js
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: 8856201484:AAFJTe6T7LRVpvqZ2tPdN0JrlL7thF3svpk
+      - key: PORT
+        value: 3000

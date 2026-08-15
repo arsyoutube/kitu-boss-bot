@@ -1,0 +1,13 @@
+{
+  "name": "lookup-pro-telegram-bot",
+  "version": "1.0.0",
+  "description": "Lookup Pro 24/7 Telegram Bot for Railway",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {}
+}
