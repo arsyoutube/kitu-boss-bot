@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 3000;
 
 // 5 Active Cloud Keys
 const KEYS = {
-  number: 'df71f80ee96575a574a90d49d20d4f45',
-  aadhaar: 'kittuaadha_657b3ac1fd72986d',
+  number: 'kittu_f21468baa1c7606b',
+  aadhaar: 'aadhar_545c3c6164c3ce5f',
   ration: 'kitturasan_3836489d9f0b36cf',
-  vehicle_rc: 'kittuvehic_6bd0cc3ce1427c7c',
-  vehicle_info: 'kittuvehic_1b2b718798bd351a'
+  vehicle_rc: 'car_a6433483a967d358',
+  vehicle_info: 'car_a6433483a967d358'
 };
 
 const userStates = {};
