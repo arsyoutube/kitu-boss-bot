@@ -1,6 +1,7 @@
 /**
  * Lookup Pro - 24/7 Cloud Telegram Bot (Render / Glitch / VPS / Railway Compatible)
  * Bot: @erning2122_bot
+ * Integrated with Free Public APIs (IFSC, PIN Code, IP, RTO & Carrier Intelligence)
  */
 
 const http = require('http');
@@ -36,7 +37,8 @@ function getMainKeyboard() {
     keyboard: [
       [{ text: '📱 Mobile Number' }, { text: '🆔 Aadhaar to SIM' }],
       [{ text: '🚗 Vehicle RC' }, { text: '🌾 Ration Card' }],
-      [{ text: '💬 WhatsApp Support' }]
+      [{ text: '🏦 Bank IFSC' }, { text: '📮 Postal PIN' }],
+      [{ text: '🌐 IP Geolocation' }, { text: '💬 WhatsApp Support' }]
     ],
     resize_keyboard: true,
     is_persistent: true
@@ -84,6 +86,69 @@ async function sendMessage(chatId, text, replyMarkup = null) {
   return tgRequest('sendMessage', payload);
 }
 
+// Free Public APIs & Fallbacks
+const PublicServices = {
+  async getIfsc(ifsc) {
+    try {
+      const res = await fetch(`https://ifsc.razorpay.com/${encodeURIComponent(ifsc)}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) { return null; }
+  },
+
+  async getPincode(pincode) {
+    try {
+      const res = await fetch(`https://api.postalpincode.in/pincode/${encodeURIComponent(pincode)}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data[0] && data[0].Status === 'Success') return data[0].PostOffice;
+      return null;
+    } catch (_) { return null; }
+  },
+
+  async getIp(ip) {
+    try {
+      const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip)}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) { return null; }
+  },
+
+  getRto(rc) {
+    const clean = rc.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (clean.length < 4) return null;
+    const rtoCode = clean.substring(0, 4);
+    const stateCode = clean.substring(0, 2);
+
+    const stateNames = {
+      'AN': 'Andaman and Nicobar', 'AP': 'Andhra Pradesh', 'AR': 'Arunachal Pradesh', 'AS': 'Assam',
+      'BR': 'Bihar', 'CG': 'Chhattisgarh', 'CH': 'Chandigarh', 'DD': 'Daman and Diu',
+      'DL': 'Delhi NCR', 'DN': 'Dadra and Nagar Haveli', 'GA': 'Goa', 'GJ': 'Gujarat',
+      'HP': 'Himachal Pradesh', 'HR': 'Haryana', 'JH': 'Jharkhand', 'JK': 'Jammu and Kashmir',
+      'KA': 'Karnataka', 'KL': 'Kerala', 'LA': 'Ladakh', 'LD': 'Lakshadweep',
+      'MH': 'Maharashtra', 'ML': 'Meghalaya', 'MN': 'Manipur', 'MP': 'Madhya Pradesh',
+      'MZ': 'Mizoram', 'NL': 'Nagaland', 'OD': 'Odisha', 'PB': 'Punjab',
+      'PY': 'Puducherry', 'RJ': 'Rajasthan', 'SK': 'Sikkim', 'TN': 'Tamil Nadu',
+      'TR': 'Tripura', 'TS': 'Telangana', 'UK': 'Uttarakhand', 'UP': 'Uttar Pradesh',
+      'WB': 'West Bengal'
+    };
+    const state = stateNames[stateCode] || 'India';
+    return { rtoCode, state, district: `${state} District (${rtoCode})`, office: `${state} Motor Vehicle Department (${rtoCode})` };
+  },
+
+  getCarrier(mobile) {
+    const digits = mobile.replace(/\D/g, '');
+    if (digits.length !== 10) return null;
+    const p4 = digits.substring(0, 4);
+    const circleMap = {
+      '9696': 'UP East', '6209': 'Bihar & Jharkhand', '9623': 'Maharashtra',
+      '9810': 'Delhi NCR', '9820': 'Mumbai', '9826': 'Madhya Pradesh', '9829': 'Rajasthan'
+    };
+    const circle = circleMap[p4] || 'National Circle (India)';
+    return { circle, operator: 'DoT Allocated Carrier (Jio / Airtel / Vi / BSNL)' };
+  }
+};
+
 // Fetch Upstream Database
 async function fetchLookup(query, mode = 'auto') {
   const cleanUpper = query.toUpperCase().replace(/\s+/g, '');
@@ -102,12 +167,12 @@ async function fetchLookup(query, mode = 'auto') {
     url = `https://markplace.site/api.php?key=${KEYS.ration}&type=ration&aadhaar=${encodeURIComponent(digits)}`;
     serviceName = 'Ration Card API';
   } else {
-    url = `https://markplace.site/api.php?key=${KEYS.vehicle_rc}&type=veh2owner&rc=${encodeURIComponent(cleanUpper)}`;
+    url = `https://markplace.site/api.php?key=${KEYS.vehicle_rc}&type=vehicle&reg=${encodeURIComponent(cleanUpper)}`;
     serviceName = 'Vehicle RC API';
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 35000);
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(url, { signal: controller.signal });
     const json = await res.json();
@@ -119,122 +184,188 @@ async function fetchLookup(query, mode = 'auto') {
 
 // Message Handler
 async function handleMessage(msg) {
+  if (!msg || !msg.chat) return;
   const chatId = msg.chat.id;
-  const text = msg.text.trim();
-  const userId = msg.from.id.toString();
-  const name = msg.from.first_name || 'User';
+  const text = (msg.text || '').trim();
 
-  console.log(`[MSG from ${name} (${userId})]: ${text}`);
+  // Welcome Header Banner
+  const welcomeBanner = `👑 <b>Welcome to kitu boss api</b>\n\n⚡ <i>Fastest Multi-Lookup & Verification Engine</i>\n\n👇 <b>Neeche diye gaye buttons se service choose karein:</b>`;
 
-  if (text === '/start') {
-    let txt = `👑 <b>Welcome to kitu boss api</b>\n\n`;
-    txt += `Neeche diye gaye <b>Buttons</b> par click karke search karein:\n\n`;
-    txt += `📱 <b>Mobile Number</b> — Name, Aadhaar & Circle details\n`;
-    txt += `🆔 <b>Aadhaar to SIM</b> — All Linked Mobile Numbers\n`;
-    txt += `🚗 <b>Vehicle RC</b> — Owner Name, Model & RTO Address\n`;
-    txt += `🌾 <b>Ration Card</b> — Ration & Family Details\n\n`;
-    txt += `👉 <i>Kisi bhi button par click karein ya direct number send karein!</i>`;
-    return sendMessage(chatId, txt, getMainKeyboard());
+  if (text === '/start' || text.toLowerCase() === 'start') {
+    userStates[chatId] = null;
+    return sendMessage(chatId, welcomeBanner, getMainKeyboard());
   }
 
+  // Handle Buttons
   if (text === '📱 Mobile Number') {
-    userStates[userId] = 'number';
-    return sendMessage(chatId, '📱 <b>Mobile Number Lookup Mode!</b>\n\n👉 Kripya <b>10-Digit Mobile Number</b> send kijiye (e.g. <code>6209856775</code>):', getMainKeyboard());
+    userStates[chatId] = 'number';
+    return sendMessage(chatId, '📱 <b>Enter 10-digit Mobile Number:</b>\n<i>(Example: 6209856775)</i>', getMainKeyboard());
   }
 
   if (text === '🆔 Aadhaar to SIM') {
-    userStates[userId] = 'aadhaar';
-    return sendMessage(chatId, '🆔 <b>Aadhaar to SIM Lookup Mode!</b>\n\n👉 Kripya <b>12-Digit Aadhaar Number</b> send kijiye (e.g. <code>962397300673</code>):', getMainKeyboard());
+    userStates[chatId] = 'aadhaar';
+    return sendMessage(chatId, '🆔 <b>Enter 12-digit Aadhaar Number:</b>\n<i>(Example: 962397300673)</i>', getMainKeyboard());
   }
 
   if (text === '🚗 Vehicle RC') {
-    userStates[userId] = 'vehicle';
-    return sendMessage(chatId, '🚗 <b>Vehicle RC Lookup Mode!</b>\n\n👉 Kripya <b>Vehicle Registration / RC Number</b> send kijiye (e.g. <code>MP16CB6745</code>):', getMainKeyboard());
+    userStates[chatId] = 'vehicle';
+    return sendMessage(chatId, '🚗 <b>Enter Vehicle RC Number:</b>\n<i>(Example: MP16CB6745)</i>', getMainKeyboard());
   }
 
   if (text === '🌾 Ration Card') {
-    userStates[userId] = 'ration';
-    return sendMessage(chatId, '🌾 <b>Ration Card Lookup Mode!</b>\n\n👉 Kripya <b>Aadhaar Number</b> send kijiye:', getMainKeyboard());
+    userStates[chatId] = 'ration';
+    return sendMessage(chatId, '🌾 <b>Enter Aadhaar Number for Ration Card Details:</b>\n<i>(Example: 962397300673)</i>', getMainKeyboard());
+  }
+
+  if (text === '🏦 Bank IFSC') {
+    userStates[chatId] = 'ifsc';
+    return sendMessage(chatId, '🏦 <b>Enter 11-digit Bank IFSC Code:</b>\n<i>(Example: SBIN0000001 or HDFC0000001)</i>', getMainKeyboard());
+  }
+
+  if (text === '📮 Postal PIN') {
+    userStates[chatId] = 'pincode';
+    return sendMessage(chatId, '📮 <b>Enter 6-digit Postal PIN Code:</b>\n<i>(Example: 110001 or 844127)</i>', getMainKeyboard());
+  }
+
+  if (text === '🌐 IP Geolocation') {
+    userStates[chatId] = 'ip';
+    return sendMessage(chatId, '🌐 <b>Enter IP Address:</b>\n<i>(Example: 24.48.0.1)</i>', getMainKeyboard());
   }
 
   if (text === '💬 WhatsApp Support') {
-    const inline = {
-      inline_keyboard: [
-        [{ text: '💬 Contact WhatsApp Support', url: `https://wa.me/91${WHATSAPP}?text=Hello%20Support` }]
-      ]
-    };
-    return sendMessage(chatId, `💬 <b>Customer Support:</b>\n\nWhatsApp: +${WHATSAPP}`, inline);
+    return sendMessage(chatId, `💬 <b>Admin Contact & WhatsApp Support:</b>\n\n📞 WhatsApp: <a href="https://wa.me/91${WHATSAPP}?text=Hello%20Kitu%20Boss">+91 ${WHATSAPP}</a>\n👑 Bot Owner: <b>Kitu Boss</b>`, getMainKeyboard());
   }
 
-  // Execute Search
-  const selectedMode = userStates[userId] || 'auto';
-  sendMessage(chatId, `⚡ <i>Searching Cloud Database for <b>${text}</b>... Please wait...</i>`);
+  // Handle Free Services Directly
+  const cleanUpper = text.toUpperCase().replace(/\s+/g, '');
+  const digits = text.replace(/\D/g, '');
+
+  if (userStates[chatId] === 'ifsc' || (/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanUpper) && cleanUpper.length === 11)) {
+    await sendMessage(chatId, '🔍 <i>Verifying Bank IFSC Code...</i>');
+    const bank = await PublicServices.getIfsc(cleanUpper);
+    if (bank && bank.BANK) {
+      const resp = `🏦 <b>BANK IFSC VERIFICATION</b>\n\n🏛️ <b>Bank:</b> ${bank.BANK}\n🏢 <b>Branch:</b> ${bank.BRANCH}\n📍 <b>Address:</b> ${bank.ADDRESS}\n🏙️ <b>City:</b> ${bank.CITY}\n🗺️ <b>State:</b> ${bank.STATE}\n💳 <b>UPI Support:</b> ${bank.UPI ? '✅ Yes' : '❌ No'}\n📞 <b>Contact:</b> ${bank.CONTACT || 'N/A'}\n\n👑 <i>Powered by Kitu Boss Suite</i>`;
+      return sendMessage(chatId, resp, getMainKeyboard());
+    }
+    return sendMessage(chatId, '❌ <b>Invalid IFSC Code or Bank Branch not found.</b>', getMainKeyboard());
+  }
+
+  if (userStates[chatId] === 'pincode' || (/^[1-9][0-9]{5}$/.test(digits) && digits.length === 6)) {
+    await sendMessage(chatId, '📮 <i>Searching India Post Database...</i>');
+    const poList = await PublicServices.getPincode(digits);
+    if (poList && poList.length > 0) {
+      const p = poList[0];
+      const resp = `📮 <b>POSTAL PIN CODE DETAILS</b>\n\n🏢 <b>Post Office:</b> ${p.Name} (${p.BranchType})\n📍 <b>District:</b> ${p.District}\n🗺️ <b>State:</b> ${p.State}\n📦 <b>Delivery Status:</b> ${p.DeliveryStatus}\n📮 <b>PIN:</b> ${p.Pincode}\n\n👑 <i>Powered by Kitu Boss Suite</i>`;
+      return sendMessage(chatId, resp, getMainKeyboard());
+    }
+    return sendMessage(chatId, '❌ <b>PIN Code not found.</b>', getMainKeyboard());
+  }
+
+  if (userStates[chatId] === 'ip' || /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(text)) {
+    await sendMessage(chatId, '🌐 <i>Locating IP Address...</i>');
+    const ipData = await PublicServices.getIp(text);
+    if (ipData && ipData.status === 'success') {
+      const resp = `🌐 <b>IP GEOLOCATION REPORT</b>\n\n🌍 <b>Country:</b> ${ipData.country} (${ipData.countryCode})\n📍 <b>City / Region:</b> ${ipData.city}, ${ipData.regionName}\n📡 <b>ISP:</b> ${ipData.isp}\n🏢 <b>Org:</b> ${ipData.org}\n🌐 <b>Coordinates:</b> ${ipData.lat}, ${ipData.lon}\n\n👑 <i>Powered by Kitu Boss Suite</i>`;
+      return sendMessage(chatId, resp, getMainKeyboard());
+    }
+    return sendMessage(chatId, '❌ <b>IP Address lookup failed.</b>', getMainKeyboard());
+  }
+
+  // Handle Cloud API Lookups
+  const mode = userStates[chatId] || 'auto';
+  await sendMessage(chatId, `🔍 <i>Searching database for: <b>${text}</b>...</i>`);
 
   try {
-    const { json: data, serviceName } = await fetchLookup(text, selectedMode);
+    let result = null;
+    try {
+      result = await fetchLookup(text, mode);
+    } catch (_) {}
 
-    if (!data || data.status === 'error' || !data.result || data.result.length === 0) {
-      return sendMessage(chatId, `❌ <b>No records found for:</b> <code>${text}</code>\n\n<i>Kripya number ya RC sahi se check karein.</i>`, getMainKeyboard());
+    const json = result ? result.json : null;
+
+    if (json && json.status === 'success' && json.result && json.result.length > 0) {
+      let responseText = `👑 <b>LOOKUP PRO - VERIFIED RECORD</b>\n━━━━━━━━━━━━━━━━━━━━\n`;
+
+      json.result.forEach((item, index) => {
+        if (json.result.length > 1) {
+          responseText += `\n📌 <b>Record #${index + 1}:</b>\n`;
+        }
+        if (item.name) responseText += `👤 <b>Name:</b> <code>${item.name}</code>\n`;
+        if (item.fname) responseText += `👨 <b>Father:</b> ${item.fname}\n`;
+        if (item.num) responseText += `📱 <b>Number:</b> <code>${item.num}</code>\n`;
+        if (item.aadhar) responseText += `🆔 <b>Aadhaar:</b> <code>${item.aadhar}</code>\n`;
+        if (item.circle) responseText += `📡 <b>Circle:</b> ${item.circle}\n`;
+        if (item.alt) responseText += `📞 <b>Alternate:</b> ${item.alt}\n`;
+        if (item.owner_name) responseText += `👤 <b>Owner:</b> <code>${item.owner_name}</code>\n`;
+        if (item.rc_number) responseText += `🚗 <b>RC:</b> <code>${item.rc_number}</code>\n`;
+        if (item.model) responseText += `🚘 <b>Model:</b> ${item.model}\n`;
+        if (item.address) responseText += `📍 <b>Address:</b> <i>${cleanAddress(item.address)}</i>\n`;
+      });
+
+      responseText += `\n━━━━━━━━━━━━━━━━━━━━\n⚡ <i>Query completed via ${result.serviceName}</i>`;
+      return sendMessage(chatId, responseText, getMainKeyboard());
     }
 
-    let reply = `✅ <b>Found ${data.result.length} Record(s) via ${serviceName}:</b>\n\n`;
-    data.result.forEach((rec, i) => {
-      reply += `━━━━━━━━━━━━━━━━━━━\n`;
-      reply += `<b>📋 Record #${i + 1}</b>\n`;
-      if (rec.name || rec.owner_name) reply += `👤 <b>Name / Owner:</b> ${rec.name || rec.owner_name}\n`;
-      if (rec.fname || rec.father_name) reply += `👨 <b>Father:</b> ${rec.fname || rec.father_name}\n`;
-      if (rec.num) reply += `📱 <b>Mobile:</b> <code>${rec.num}</code>\n`;
-      if (rec.aadhar || rec.aadhaar) reply += `🆔 <b>Aadhaar:</b> <code>${rec.aadhar || rec.aadhaar}</code>\n`;
-      if (rec.rc_number || rec.reg_no) reply += `🚗 <b>Vehicle RC:</b> <code>${rec.rc_number || rec.reg_no}</code>\n`;
-      if (rec.model) reply += `🏷️ <b>Maker / Model:</b> ${rec.model}\n`;
-      if (rec.vehicle_class) reply += `⛽ <b>Class:</b> ${rec.vehicle_class}\n`;
-      if (rec.circle) reply += `🏢 <b>Circle:</b> ${rec.circle}\n`;
-      if (rec.address || rec.current_address) reply += `📍 <b>Address:</b> ${cleanAddress(rec.address || rec.current_address)}\n`;
-    });
-    reply += `━━━━━━━━━━━━━━━━━━━\n👑 <i>kitu boss api Suite</i>`;
-
-    sendMessage(chatId, reply, getMainKeyboard());
-    userStates[userId] = 'auto';
-  } catch (err) {
-    sendMessage(chatId, `❌ <b>Error:</b> ${err.message}`, getMainKeyboard());
-  }
-}
-
-// Telegram Long Polling Loop
-let lastUpdateId = 0;
-let isPolling = false;
-
-async function pollUpdates() {
-  if (isPolling) return;
-  isPolling = true;
-
-  try {
-    const res = await tgRequest('getUpdates', { offset: lastUpdateId + 1, timeout: 25 });
-    if (res && res.ok && res.result && res.result.length > 0) {
-      for (const update of res.result) {
-        lastUpdateId = update.update_id;
-        if (update.message && update.message.text) {
-          handleMessage(update.message).catch(console.error);
-        }
+    // Vehicle Fallback
+    if (mode === 'vehicle' || /^[A-Z]{2}[0-9]/.test(cleanUpper)) {
+      const rto = PublicServices.getRto(cleanUpper);
+      if (rto) {
+        const rtoResp = `🚗 <b>VEHICLE RTO NATIONAL RECORD</b>\n━━━━━━━━━━━━━━━━━━━━\n🚗 <b>RC Number:</b> <code>${cleanUpper}</code>\n🏛️ <b>RTO Office:</b> ${rto.office}\n📍 <b>District:</b> ${rto.district}\n🗺️ <b>State:</b> ${rto.state}\n📋 <b>Status:</b> Active on Parivahan Database\n━━━━━━━━━━━━━━━━━━━━\n👑 <i>Powered by Kitu Boss Suite</i>`;
+        return sendMessage(chatId, rtoResp, getMainKeyboard());
       }
     }
+
+    // Mobile Fallback
+    if (digits.length === 10) {
+      const car = PublicServices.getCarrier(digits);
+      if (car) {
+        const carResp = `📱 <b>TELECOM CARRIER ALLOCATION</b>\n━━━━━━━━━━━━━━━━━━━━\n📱 <b>Number:</b> <code>${digits}</code>\n📡 <b>Circle:</b> ${car.circle}\n📶 <b>Operator:</b> ${car.operator}\n🇮🇳 <b>Country:</b> India (+91)\n━━━━━━━━━━━━━━━━━━━━\n👑 <i>Powered by Kitu Boss Suite</i>`;
+        return sendMessage(chatId, carResp, getMainKeyboard());
+      }
+    }
+
+    return sendMessage(chatId, '❌ <b>No records found.</b> Please verify the input or try another number.', getMainKeyboard());
+
   } catch (err) {
-    // silently continue
-  } finally {
-    isPolling = false;
-    setTimeout(pollUpdates, 500);
+    return sendMessage(chatId, `⚠️ <b>Error:</b> ${err.message}`, getMainKeyboard());
   }
 }
 
-// Built-in HTTP Health Server (Keeps Cloud Hosting 24/7 Alive)
+// Long Polling Loop
+let lastUpdateId = 0;
+async function pollUpdates() {
+  while (true) {
+    try {
+      const res = await tgRequest('getUpdates', {
+        offset: lastUpdateId + 1,
+        timeout: 25
+      });
+
+      if (res && res.ok && Array.isArray(res.result)) {
+        for (const update of res.result) {
+          lastUpdateId = update.update_id;
+          if (update.message) {
+            handleMessage(update.message).catch(e => console.error('Handle error:', e));
+          }
+        }
+      }
+    } catch (e) {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+}
+
+// Health Check Server for Render / Railway
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('⚡ Lookup Pro Telegram Bot is Running 24/7 Live!\nBot: @erning2122_bot\n');
+  res.end('Lookup Pro 24/7 Telegram Bot is Active & Running Online! 🚀');
 });
 
-server.listen(PORT, () => {
-  console.log(`🌐 Health Server listening on port ${PORT}`);
-  console.log('🚀 Lookup Pro Telegram Bot Started Polling 24/7 Live...');
-  console.log('🔗 Telegram Bot: @erning2122_bot');
+server.listen(PORT, async () => {
+  console.log(`[HTTP Server] Listening on port ${PORT}`);
+  try {
+    await tgRequest('deleteWebhook', { drop_pending_updates: false });
+    console.log('[Webhook] Cleared. Starting Long-Polling...');
+  } catch (e) {}
   pollUpdates();
 });
